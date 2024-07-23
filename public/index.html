@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>DJ Music Creator</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: #f4f4f4;
+            color: #333;
+            margin: 0;
+            padding: 0;
+            text-align: center;
+        }
+
+        h1 {
+            background-color: #333;
+            color: #fff;
+            padding: 20px;
+            margin: 0;
+        }
+        .container {
+            max-width: 900px;
+            margin: 20px auto;
+            padding: 20px;
+            background-color: #fff;
+            border-radius: 8px;
+            box-shadow: 0 0 15px rgba(0, 0, 0, 0.2);
+        }
+        .keyboard-container {
+            padding: 40px; /* Increased padding */
+            background-color: #eee;
+            border-radius: 8px;
+            margin: 20px auto; /* Center the container */
+            max-width: 1000px; /* Set a max-width */
+        }
+        .keyboard {
+            display: flex;
+            flex-wrap: wrap;
+            justify-content: center;
+            gap: 10px; /* Increased gap */
+            margin: 20px 0;
+        }
+        .key {
+            display: inline-block;
+            width: 60px; /* Increased width */
+            height: 60px; /* Increased height */
+            background-color: #007bff;
+            color: #fff;
+            text-align: center;
+            line-height: 60px; /* Adjusted line-height */
+            font-size: 20px; /* Increased font size */
+            cursor: pointer;
+            border-radius: 4px;
+            transition: background-color 0.3s, transform 0.2s;
+            box-shadow: 0 2px 5px rgba(0, 0, 0, 0.2);
+        }
+        .key:hover {
+            background-color: #0056b3;
+            transform: scale(1.1);
+        }
+        .key:active {
+            background-color: #003d7a;
+        }
+        form {
+            margin-bottom: 20px;
+        }
+        input[type="file"],
+        input[type="text"] {
+            margin: 10px;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            color: #fff;
+            background-color: #28a745;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s, transform 0.2s;
+            margin: 5px;
+        }
+        button:hover {
+            background-color: #218838;
+            transform: scale(1.05);
+        }
+        button:active {
+            background-color: #1e7e34;
+        }
+        .button-container {
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+<h1>DJ Music Creator</h1>
+<div class="container">
+
+    <form id="uploadForm">
+        <label for="soundUpload">Upload Sound:</label>
+        <input type="file" id="soundUpload" accept="audio/*" required>
+        <input type="text" id="key" placeholder="Enter key" required>
+        <button type="button" onclick="uploadSound()">Upload Sound</button>
+    </form>
+    <div class="button-container">
+        <button onclick="startRecording()">Start Recording</button>
+        <button onclick="stopRecording()">Stop Recording</button>
+        <button onclick="downloadSequence()">Download Sequence</button>
+        <button onclick="downloadAudio()">Download Audio</button>
+    </div>
+</div>
+<div class="container keyboard-container">
+
+
+    <div class="keyboard" id="keyboard"></div>
+</div>
+<script src="https://cdn.jsdelivr.net/npm/lamejs@1.2.0/lame.min.js"></script>
+<script>
+    const keyboard = document.getElementById('keyboard');
+    const soundMappings = {};
+    const audioElements = {};
+    let isRecording = false;
+    let sequence = [];
+    let startTime = null;
+    let mediaRecorder;
+    let audioChunks = [];
+    let audioContext;
+    let destination;
+
+    const keyPressed = {}; // Track key press state
+
+    document.addEventListener('DOMContentLoaded', () => {
+        audioContext = new (window.AudioContext || window.webkitAudioContext)();
+        destination = audioContext.createMediaStreamDestination();
+
+        // Ensure AudioContext is resumed after a user gesture
+        document.body.addEventListener('click', () => {
+            if (audioContext.state === 'suspended') {
+                audioContext.resume().catch(err => {
+                    console.error('Error resuming AudioContext:', err);
+                });
+            }
+        }, { once: true }); // Remove event listener after first use
+
+        initializeKeyboard();
+    });
+
+    function initializeKeyboard() {
+        const keys = [
+            '`', '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', 'Backspace',
+            'Tab', 'Q', 'W', 'E', 'R', 'T', 'Y', 'U', 'I', 'O', 'P', '[', ']', '\\',
+            'CapsLock', 'A', 'S', 'D', 'F', 'G', 'H', 'J', 'K', 'L', ';', '\'', 'Enter',
+            'Shift', 'Z', 'X', 'C', 'V', 'B', 'N', 'M', ',', '.', '/', 'Shift',
+            'Control', 'Alt', 'Space', 'Alt', 'Control'
+        ];
+
+        keys.forEach(key => {
+            const keyElement = document.createElement('div');
+            keyElement.id = key;
+            keyElement.className = 'key';
+            keyElement.innerText = key;
+            keyElement.onclick = () => handleKeyClick(key);
+            keyboard.appendChild(keyElement);
+        });
+
+        document.addEventListener('keydown', (event) => {
+            const key = event.key.toUpperCase();
+            if (soundMappings[key] && !keyPressed[key]) {
+                playSound(key);
+                highlightKey(key);
+                if (isRecording) {
+                    recordEvent(key, 'start');
+                }
+                keyPressed[key] = true; // Mark the key as pressed
+            }
+        });
+
+        document.addEventListener('keyup', (event) => {
+            const key = event.key.toUpperCase();
+            if (soundMappings[key]) {
+                stopSound(key);
+                removeHighlightKey(key);
+                if (isRecording) {
+                    recordEvent(key, 'stop');
+                }
+                keyPressed[key] = false; // Mark the key as released
+            }
+        });
+    }
+
+    function handleKeyClick(key) {
+        if (soundMappings[key]) {
+            if (!audioElements[key]?.playing) {
+                playSound(key);
+                highlightKey(key);
+                if (isRecording) {
+                    recordEvent(key, 'start');
+                }
+            } else {
+                stopSound(key);
+                removeHighlightKey(key);
+                if (isRecording) {
+                    recordEvent(key, 'stop');
+                }
+            }
+        }
+    }
+
+    function playSound(key) {
+        if (!audioElements[key]) {
+            audioElements[key] = new Audio(soundMappings[key]);
+            const track = audioContext.createMediaElementSource(audioElements[key]);
+            track.connect(destination);
+            track.connect(audioContext.destination);
+            audioElements[key].loop = true;
+        }
+        audioElements[key].playing = true;
+        audioElements[key].currentTime = 0;
+        audioElements[key].play().catch(error => {
+            console.error(`Error playing sound for key: ${key}`, error);
+        });
+    }
+
+    function stopSound(key) {
+        if (audioElements[key]) {
+            audioElements[key].playing = false;
+            audioElements[key].pause();
+        }
+    }
+
+    function highlightKey(key) {
+        const keyElement = document.getElementById(key);
+        if (keyElement) {
+            keyElement.style.backgroundColor = getRandomColor();
+        }
+    }
+
+    function removeHighlightKey(key) {
+        const keyElement = document.getElementById(key);
+        if (keyElement) {
+            keyElement.style.backgroundColor = 'lightgrey';
+        }
+    }
+
+    function getRandomColor() {
+        const letters = '0123456789ABCDEF';
+        let color = '#';
+        for (let i = 0; i < 6; i++) {
+            color += letters[Math.floor(Math.random() * 16)];
+        }
+        return color;
+    }
+
+    function uploadSound() {
+        const soundUpload = document.getElementById('soundUpload').files[0];
+        const key = document.getElementById('key').value.toUpperCase();
+        const formData = new FormData();
+        formData.append('sound', soundUpload);
+        formData.append('key', key);
+
+        fetch('/upload', {
+            method: 'POST',
+            body: formData
+        })
+            .then(response => response.json())
+            .then(data => {
+                soundMappings[data.key] = data.sound;
+            })
+            .catch(error => {
+                console.error('Error uploading sound:', error);
+            });
+    }
+
+    function startRecording() {
+        isRecording = true;
+        sequence = [];
+        startTime = Date.now();
+        startAudioRecording();
+    }
+
+    function stopRecording() {
+        isRecording = false;
+        stopAudioRecording();
+    }
+
+    function recordEvent(key, action) {
+        const timestamp = Date.now() - startTime;
+        sequence.push({ key, action, timestamp });
+    }
+
+    function downloadSequence() {
+        const blob = new Blob([JSON.stringify(sequence, null, 2)], { type: 'application/json' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = 'sequence.json';
+        a.click();
+        URL.revokeObjectURL(url);
+    }
+
+    function startAudioRecording() {
+        audioChunks = [];
+        mediaRecorder = new MediaRecorder(destination.stream, { mimeType: 'audio/webm; codecs=opus' });
+        mediaRecorder.ondataavailable = event => {
+            audioChunks.push(event.data);
+        };
+        mediaRecorder.start();
+    }
+
+    function stopAudioRecording() {
+        if (mediaRecorder) {
+            mediaRecorder.stop();
+            mediaRecorder.onstop = () => {
+                const webmBlob = new Blob(audioChunks, { type: 'audio/webm' });
+                convertWebmToMp3(webmBlob, 'recorded_audio.mp3');
+            };
+        }
+    }
+
+    function convertWebmToMp3(webmBlob, filename) {
+        const reader = new FileReader();
+        reader.onload = function(event) {
+            const webmData = event.target.result;
+            const audioContext = new (window.AudioContext || window.webkitAudioContext)();
+            audioContext.decodeAudioData(webmData).then(buffer => {
+                const mp3Encoder = new lamejs.Mp3Encoder(1, buffer.sampleRate, 128);
+                const mp3Data = [];
+                const samples = buffer.getChannelData(0); // Use the first channel for mono
+                const sampleCount = samples.length;
+                const mp3Buffer = mp3Encoder.encodeBuffer(new Int16Array(samples.map(sample => sample * 32767)));
+                if (mp3Buffer.length > 0) mp3Data.push(new Uint8Array(mp3Buffer));
+                const finalBuffer = mp3Encoder.flush();
+                if (finalBuffer.length > 0) mp3Data.push(new Uint8Array(finalBuffer));
+
+                const mp3Blob = new Blob(mp3Data, { type: 'audio/mp3' });
+                const url = URL.createObjectURL(mp3Blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = filename;
+                a.click();
+                URL.revokeObjectURL(url);
+            }).catch(error => {
+                console.error('Error decoding WebM audio data:', error);
+            });
+        };
+        reader.readAsArrayBuffer(webmBlob);
+    }
+
+    function downloadAudio() {
+        const blob = new Blob(audioChunks, { type: 'audio/webm' });
+        convertWebmToMp3(blob, 'recorded_audio.mp3');
+    }
+
+    fetch('/sounds')
+        .then(response => response.json())
+        .then(data => {
+            Object.keys(data).forEach(key => {
+                soundMappings[key] = data[key];
+            });
+        })
+        .catch(error => {
+            console.error('Error fetching sound mappings:', error);
+        });
+</script>
+</body>
+</html>
